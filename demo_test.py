@@ -5,7 +5,7 @@ import random
 from stable_baselines3 import PPO
 
 # **加载训练好的 PPO agent（强制使用 CPU）**
-ppo_agent = PPO.load("ppo_checkpoint/ppo_offloading_6400.zip", device="cpu")
+ppo_agent = PPO.load("ppo_checkpoint/ppo_offloading_6400_2.zip", device="cpu")
 
 # 设置固定的更新间隔（单位：ms）
 RAW_EDGE_UPDATE_INTERVAL = 60  # 每 60ms 运行一次循环
@@ -35,17 +35,19 @@ current_cloud_task = None  # 记录当前正在处理的 Cloud 任务
 
 # **使用 DISOpticalFlow**
 dis = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
+dis_2 = cv2.DISOpticalFlow_create(cv2.DISOPTICAL_FLOW_PRESET_ULTRAFAST)
 
 # **创建窗口**
-cv2.namedWindow("Raw Data", cv2.WINDOW_NORMAL)
-cv2.namedWindow("Edge Segmentation", cv2.WINDOW_NORMAL)
-cv2.namedWindow("Cloud Segmentation", cv2.WINDOW_NORMAL)
-cv2.namedWindow("ECSeg", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("ECSeg", 1024, 512)
-cv2.resizeWindow("Raw Data", 1024, 512)
-cv2.resizeWindow("Edge Segmentation", 1024, 512)
-cv2.resizeWindow("Cloud Segmentation", 1024, 512)
-
+# cv2.namedWindow("Raw Data", cv2.WINDOW_NORMAL)
+# cv2.namedWindow("Edge Segmentation", cv2.WINDOW_NORMAL)
+# cv2.namedWindow("Cloud Segmentation", cv2.WINDOW_NORMAL)
+# cv2.namedWindow("ECSeg", cv2.WINDOW_NORMAL)
+# cv2.resizeWindow("ECSeg", 1024, 512)
+# cv2.resizeWindow("Raw Data", 1024, 512)
+# cv2.resizeWindow("Edge Segmentation", 1024, 512)
+# cv2.resizeWindow("Cloud Segmentation", 1024, 512)
+cv2.namedWindow("All Display", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("All Display", 2048, 1024)  # 可根据需求调整大小
 print("开始模拟视频播放（按 ESC 退出）。")
 
 start_time = time.time()
@@ -59,6 +61,7 @@ while True:
 
     # **1. 计算上一个 PERIOD 的平均 latency**
     if frame_index % PERIOD == 0 and frame_index > 0:
+
         average_latency = np.mean(latency_buffer) if latency_buffer else current_latency
         latency_buffer = []  # 清空 buffer，开始新周期
 
@@ -67,7 +70,7 @@ while True:
         decision = "Edge"
     elif frame_index % PERIOD == 0:
         print(f"Avg Euclidean: {avg_euclidean}, Avg Latency: {average_latency}")
-        observation = np.array([avg_euclidean/6, (average_latency-22)/2961]).reshape(1, -1)  # 观察值 (1,2)
+        observation = np.array([avg_euclidean/165, (average_latency-22)/2961]).reshape(1, -1)  # 观察值 (1,2)# /6
         action, _ = ppo_agent.predict(observation, deterministic=True)
         decision = "Edge" if action == 0 else "Cloud"
 
@@ -124,27 +127,79 @@ while True:
 
     # **7. 计算 avg_euclidean**
     if frame_index % PERIOD == 0 and frame_index > 0:
+        start = time.time()
+
         last_frame_gray = cv2.cvtColor(cloud_seg_images[frame_index], cv2.COLOR_BGR2GRAY)
-        flow_period = cv2.calcOpticalFlowFarneback(first_frame_gray, last_frame_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        flow_period = dis_2.calc(first_frame_gray, last_frame_gray, None)
+
+        # 后面跟你的 Farneback 版本一样
         euclidean_distance = np.sqrt(flow_period[..., 0] ** 2 + flow_period[..., 1] ** 2)
         avg_euclidean = np.mean(euclidean_distance)
+
         first_frame_gray = last_frame_gray.copy()
 
-    selected_frame = edge_seg_images[frame_index] if decision == "Edge" else new_cloud_result
+        # flow_period = cv2.calcOpticalFlowFarneback(first_frame_gray, last_frame_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        # euclidean_distance = np.sqrt(flow_period[..., 0] ** 2 + flow_period[..., 1] ** 2)
+        # avg_euclidean = np.mean(euclidean_distance)
+        # first_frame_gray = last_frame_gray.copy()
+        end = time.time()
+        print(end - start)
+    selected_frame = edge_seg_images[frame_index].copy() if decision == "Edge" else new_cloud_result.copy()
     selected_text = f"Decision: {decision}"
     color = (0, 255, 0) if decision == "Edge" else (255, 255, 255)
-    cv2.putText(selected_frame, selected_text, (700, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 4)
 
     # **8. 显示所有窗口**
-    cv2.imshow("ECSeg", edge_seg_images[frame_index] if decision == "Edge" else new_cloud_result)
+    # cv2.imshow("ECSeg", edge_seg_images[frame_index] if decision == "Edge" else new_cloud_result)
     latency_text = f"Cloud Latency: {average_latency:.0f} ms"
-    cv2.putText(new_cloud_result, latency_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 4)
-    cv2.putText(new_cloud_result, f"Avg Euclidean: {avg_euclidean:.2f}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+    # cv2.putText(new_cloud_result, latency_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 4)
+    # cv2.putText(new_cloud_result, f"Avg Euclidean: {avg_euclidean:.2f}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+    #             (255, 255, 255), 4)
+
+    cv2.putText(selected_frame, selected_text, (700, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 4)
+    cv2.putText(selected_frame, latency_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 4)
+    cv2.putText(selected_frame, f"Avg Euclidean: {avg_euclidean:.2f}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
                 (255, 255, 255), 4)
 
-    cv2.imshow("Raw Data", raw_data_images[frame_index])
-    cv2.imshow("Edge Segmentation", edge_seg_images[frame_index])
-    cv2.imshow("Cloud Segmentation", new_cloud_result)
+    cv2.putText(edge_seg_images[frame_index], "Edge results", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                (255, 255, 255), 4)
+
+    cv2.putText(new_cloud_result, "Cloud results", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                (255, 255, 255), 4)
+
+
+    # cv2.imshow("Raw Data", raw_data_images[frame_index])
+    # cv2.imshow("Edge Segmentation", edge_seg_images[frame_index])
+    # cv2.imshow("Cloud Segmentation", new_cloud_result)
+
+
+
+
+    separator_vertical = np.ones((512, 10, 3), dtype=np.uint8) * 255  # 竖直分隔线，宽10px，高512px
+    separator_horizontal = np.ones((10, 2 * 1024 + 10, 3), dtype=np.uint8) * 255  # 水平分隔线，宽2060px
+
+    # ⭐ Resize四张图（你原本的设定，不变）
+    small_raw = cv2.resize(raw_data_images[frame_index], (1024, 512))
+    small_edge = cv2.resize(edge_seg_images[frame_index], (1024, 512))
+    small_cloud = cv2.resize(new_cloud_result, (1024, 512))
+    small_ecseg = cv2.resize(selected_frame, (1024, 512))
+
+    # ⭐ 拼接（加上分隔线）
+    top_row = np.hstack((small_raw, separator_vertical, small_edge))
+    bottom_row = np.hstack((small_cloud, separator_vertical, small_ecseg))
+    combined_frame = np.vstack((top_row, separator_horizontal, bottom_row))
+
+    # small_raw = cv2.resize(raw_data_images[frame_index], (1024, 512))
+    # small_edge = cv2.resize(edge_seg_images[frame_index], (1024, 512))
+    # small_cloud = cv2.resize(new_cloud_result, (1024, 512))
+    # small_ecseg = cv2.resize(selected_frame, (1024, 512))
+    #
+    # # **⭐新加：拼接图像⭐**
+    # top_row = np.hstack((small_raw, small_edge))
+    # bottom_row = np.hstack((small_cloud, small_ecseg))
+    # combined_frame = np.vstack((top_row, bottom_row))
+
+    # **⭐新加：只显示一个总窗口⭐**
+    cv2.imshow("All Display", combined_frame)
 
     # **9. 退出检测**
     if cv2.waitKey(1) == 27:
