@@ -4,18 +4,17 @@ import time
 import random
 from stable_baselines3 import PPO
 
-# **加载训练好的 PPO agent（强制使用 CPU）**
-ppo_agent = PPO.load("ppo_checkpoint/ppo_offloading_6400_2.zip", device="cpu")
+ppo_agent = PPO.load("ppo_checkpoint/ppo_offloading_6400_3.zip", device="cpu")
 
 # 设置固定的更新间隔（单位：ms）
 RAW_EDGE_UPDATE_INTERVAL = 60  # 每 60ms 运行一次循环
 PERIOD = 17  # 每 17 帧重新决策
 
 # 加载数据
-raw_data_images = np.load("raw_data_half.npy")  # 假设 shape: (N, H, W, C)
-edge_seg_images = np.load("edge_segmentation_results_half.npy")  # shape: (N, H, W)
-cloud_seg_images = np.load("cloud_segmentation_results_half.npy")  # 必须是 (N, H, W, 3) 的 RGB
-image_latency = np.load("latency_sample_v2.npy")  # ⚠️ 转换为毫秒
+raw_data_images = np.load("raw_data_half.npy")
+edge_seg_images = np.load("edge_segmentation_results_half.npy")
+cloud_seg_images = np.load("cloud_segmentation_results_half.npy")
+image_latency = np.load("latency_sample_v2.npy")
 
 # 计算最短帧数，防止数组越界
 min_frames = min(raw_data_images.shape[0], edge_seg_images.shape[0], cloud_seg_images.shape[0])
@@ -53,6 +52,7 @@ print("开始模拟视频播放（按 ESC 退出）。")
 start_time = time.time()
 first_frame_gray = cv2.cvtColor(raw_data_images[0], cv2.COLOR_BGR2GRAY)
 
+
 while True:
     loop_start_time = time.time()
 
@@ -70,15 +70,28 @@ while True:
         decision = "Edge"
     elif frame_index % PERIOD == 0:
         print(f"Avg Euclidean: {avg_euclidean}, Avg Latency: {average_latency}")
-        observation = np.array([avg_euclidean/165, (average_latency-22)/2961]).reshape(1, -1)  # 观察值 (1,2)# /6
+        observation = np.array([avg_euclidean/300, (average_latency-22)/2961]).reshape(1, -1)  # 观察值 (1,2)# /6/45
         action, _ = ppo_agent.predict(observation, deterministic=True)
         decision = "Edge" if action == 0 else "Cloud"
 
     # **3. Raw & Edge 每 60ms 更新**
     if elapsed_time >= (frame_index + 1) * RAW_EDGE_UPDATE_INTERVAL:
         frame_index += 1
+        # if frame_index >= min_frames:
+        #     break
         if frame_index >= min_frames:
-            break
+            frame_index = 0
+            latency_index = 0
+            current_latency = image_latency[0] if len(image_latency) > 0 else 100
+            avg_euclidean = 0.0
+            latency_buffer = []
+            average_latency = current_latency
+            cloud_queue = []
+            latest_cloud_frame = -1
+            current_cloud_task = None
+            first_frame_gray = cv2.cvtColor(raw_data_images[0], cv2.COLOR_BGR2GRAY)
+            start_time = time.time()  # ⭐重新计时，避免时间太大
+            continue
 
         # **4. Cloud 任务进入队列**
         if latency_index < len(image_latency):
@@ -160,11 +173,21 @@ while True:
     cv2.putText(selected_frame, f"Avg Euclidean: {avg_euclidean:.2f}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
                 (255, 255, 255), 4)
 
-    cv2.putText(edge_seg_images[frame_index], "Edge results", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+    # ⭐修改后（复制一份，再写）
+    edge_frame_copy = edge_seg_images[frame_index].copy()
+    cloud_frame_copy = new_cloud_result.copy()
+
+    cv2.putText(edge_frame_copy, "Edge results", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
                 (255, 255, 255), 4)
 
-    cv2.putText(new_cloud_result, "Cloud results", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+    cv2.putText(cloud_frame_copy, "Cloud results + Propagation", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
                 (255, 255, 255), 4)
+
+    # cv2.putText(edge_seg_images[frame_index], "Edge results", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+    #             (255, 255, 255), 4)
+    #
+    # cv2.putText(new_cloud_result, "Cloud results + Propagation", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 1,
+    #             (255, 255, 255), 4)
 
 
     # cv2.imshow("Raw Data", raw_data_images[frame_index])
@@ -179,8 +202,8 @@ while True:
 
     # ⭐ Resize四张图（你原本的设定，不变）
     small_raw = cv2.resize(raw_data_images[frame_index], (1024, 512))
-    small_edge = cv2.resize(edge_seg_images[frame_index], (1024, 512))
-    small_cloud = cv2.resize(new_cloud_result, (1024, 512))
+    small_edge = cv2.resize(edge_frame_copy, (1024, 512))
+    small_cloud = cv2.resize(cloud_frame_copy, (1024, 512))
     small_ecseg = cv2.resize(selected_frame, (1024, 512))
 
     # ⭐ 拼接（加上分隔线）
